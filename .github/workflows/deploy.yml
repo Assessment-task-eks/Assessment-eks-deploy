@@ -104,6 +104,44 @@ jobs:
         terraform init
 
 
+    # Check existing node group and import if missing
+    - name: Import existing EKS Node Group if required
+      if: steps.changes.outputs.terraform == 'true'
+      working-directory: terraform
+      run: |
+
+        if terraform state list | grep -q "module.nodegroups.aws_eks_node_group.nodes"; then
+          echo "Node group already managed by Terraform"
+        else
+
+          echo "Checking AWS for existing node group..."
+
+          NODEGROUP=$(aws eks list-nodegroups \
+          --cluster-name $CLUSTER_NAME \
+          --region $AWS_REGION \
+          --query "nodegroups[?contains(@, 'application-workers')]" \
+          --output text)
+
+
+          if [ "$NODEGROUP" = "application-workers" ]; then
+
+            echo "Importing existing node group into Terraform state"
+
+
+            terraform import \
+            module.nodegroups.aws_eks_node_group.nodes \
+            $CLUSTER_NAME:application-workers
+
+          else
+
+            echo "No existing node group found"
+
+          fi
+
+        fi
+
+
+
 
     - name: Terraform Plan
 

@@ -81,7 +81,8 @@ resource "aws_eks_access_entry" "nodes" {
   type          = "EC2_LINUX"
 
   depends_on = [
-    aws_eks_node_group.nodes
+    aws_iam_role.node
   ]
+
 }
 
