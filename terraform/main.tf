@@ -1,5 +1,5 @@
 provider "aws" {
-    region = "ap-south-1"
+    region = "us-east-1"
 }
 
 module "vpc" {
@@ -45,6 +45,6 @@ terraform {
   backend "s3" {
     bucket = "eks-deploy-ram"
     key    = "terraform/terraform.tfstate"
-    region = "ap-south-1"
+    region = "us-east-1"
   }
 }
