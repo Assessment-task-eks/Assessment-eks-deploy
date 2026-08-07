@@ -98,3 +98,14 @@ resource "aws_eks_node_group" "nodes" {
   ]
 
 }
+
+
+resource "aws_eks_access_entry" "nodes" {
+
+  cluster_name = var.cluster_name
+
+  principal_arn = aws_iam_role.node.arn
+
+  type = "EC2_LINUX"
+
+}
