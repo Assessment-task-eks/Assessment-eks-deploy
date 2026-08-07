@@ -7,23 +7,16 @@ on:
       - main
 
 
-
 env:
-
   AWS_REGION: ap-south-1
-
   CLUSTER_NAME: assessment-eks
 
   BANK_API_IMAGE: bank-api
-
   UPI_API_IMAGE: upi-api
 
 
-
 permissions:
-
   contents: read
-
 
 
 jobs:
@@ -38,9 +31,7 @@ jobs:
 
     name: Terraform Apply
 
-
     runs-on: ubuntu-latest
-
 
 
     steps:
@@ -60,13 +51,9 @@ jobs:
       run: |
 
         if git diff --name-only HEAD^ HEAD | grep -q "^terraform/"; then
-
           echo "terraform=true" >> $GITHUB_OUTPUT
-
         else
-
           echo "terraform=false" >> $GITHUB_OUTPUT
-
         fi
 
 
@@ -153,7 +140,6 @@ jobs:
 
     name: Build Images and Deploy EKS
 
-
     runs-on: ubuntu-latest
 
 
@@ -168,7 +154,6 @@ jobs:
     - name: Checkout code
 
       uses: actions/checkout@v4
-
 
 
 
@@ -188,11 +173,9 @@ jobs:
 
 
 
-
     - name: Login to Amazon ECR
 
       uses: aws-actions/amazon-ecr-login@v2
-
 
 
 
@@ -216,12 +199,7 @@ jobs:
 
       run: |
 
-        docker build \
-
-        -t $BANK_API_IMAGE:${{ github.sha }} \
-
-        ./apps/bank-api
-
+        docker build -t $BANK_API_IMAGE:${{ github.sha }} ./apps/bank-api
 
 
 
@@ -230,18 +208,14 @@ jobs:
 
       run: |
 
-        docker build \
-
-        -t $UPI_API_IMAGE:${{ github.sha }} \
-
-        ./apps/upi-api
+        docker build -t $UPI_API_IMAGE:${{ github.sha }} ./apps/upi-api
 
 
 
 
 
 # =====================================================
-# Push Images to ECR
+# Push Images
 # =====================================================
 
 
@@ -249,19 +223,13 @@ jobs:
 
       run: |
 
-
         docker tag \
-
         $BANK_API_IMAGE:${{ github.sha }} \
-
         $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}
-
 
 
         docker push \
-
         $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}
-
 
 
 
@@ -272,17 +240,12 @@ jobs:
 
       run: |
 
-
         docker tag \
-
         $UPI_API_IMAGE:${{ github.sha }} \
-
         $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}
 
 
-
         docker push \
-
         $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}
 
 
@@ -291,7 +254,7 @@ jobs:
 
 
 # =====================================================
-# Connect EKS
+# Kubernetes Connection
 # =====================================================
 
 
@@ -299,11 +262,8 @@ jobs:
 
       run: |
 
-
         aws eks update-kubeconfig \
-
         --region $AWS_REGION \
-
         --name $CLUSTER_NAME
 
 
@@ -311,14 +271,13 @@ jobs:
 
 
 # =====================================================
-# Deploy Kubernetes
+# Kubernetes Deploy
 # =====================================================
 
 
     - name: Apply Kubernetes manifests
 
       run: |
-
 
         kubectl apply -f kubernetes/bank-api/
 
@@ -328,9 +287,8 @@ jobs:
 
 
 
-
 # =====================================================
-# Update Images
+# Update Running Images
 # =====================================================
 
 
@@ -338,13 +296,8 @@ jobs:
 
       run: |
 
-
         kubectl set image deployment/bank-api \
-
         bank-api=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}
-
-
-
 
 
 
@@ -353,9 +306,7 @@ jobs:
 
       run: |
 
-
         kubectl set image deployment/upi-api \
-
         upi-api=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}
 
 
@@ -364,20 +315,24 @@ jobs:
 
 
 # =====================================================
-# Verify Rollout
+# Verify Deployment
 # =====================================================
 
 
-    - name: Wait for Rollout
+    - name: Wait for Bank API rollout
 
       run: |
 
-
-        kubectl rollout status deployment/bank-api
-
-        kubectl rollout status deployment/upi-api
+        kubectl rollout status deployment/bank-api --timeout=180s
 
 
+
+
+    - name: Wait for UPI API rollout
+
+      run: |
+
+        kubectl rollout status deployment/upi-api --timeout=180s
 
 
 
@@ -385,6 +340,5 @@ jobs:
     - name: Check Pods
 
       run: |
-
 
         kubectl get pods -A
