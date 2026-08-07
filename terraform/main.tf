@@ -43,7 +43,7 @@ module "ecr" {
 
 terraform {
   backend "s3" {
-    bucket = "eks-deploy-ram"
+    bucket = "ram-test-eks"
     key    = "terraform/terraform.tfstate"
     region = "us-east-1"
   }
