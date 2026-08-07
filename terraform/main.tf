@@ -1,3 +1,7 @@
+provider "aws" {
+    region = "ap-south-1"
+}
+
 module "vpc" {
   source = "./vpc"
 
@@ -34,4 +38,13 @@ module "nodegroups" {
 
 module "ecr" {
   source = "./ecr"
+}
+
+
+terraform {
+  backend "s3" {
+    bucket = "eks-deploy-ram"
+    key    = "terraform/terraform.tfstate"
+    region = "ap-south-1"
+  }
 }
