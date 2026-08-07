@@ -7,7 +7,7 @@ on:
 
 
 env:
-  AWS_REGION: ap-south-1
+  AWS_REGION: us-east-1
   CLUSTER_NAME: assessment-eks
 
   BANK_API_IMAGE: bank-api
