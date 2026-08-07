@@ -8,6 +8,7 @@ module "vpc" {
   availability_zones = var.availability_zones
 }
 
+
 module "eks" {
   source = "./eks"
 
