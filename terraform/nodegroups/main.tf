@@ -84,3 +84,4 @@ resource "aws_eks_access_entry" "nodes" {
     aws_eks_node_group.nodes
   ]
 }
+
