@@ -3,6 +3,7 @@ variable "aws_region" {
   type        = string
 }
 
+
 variable "cluster_name" {
   description = "EKS Cluster Name"
   type        = string
