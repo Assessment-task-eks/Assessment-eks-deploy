@@ -93,13 +93,22 @@ jobs:
         run: |
           terraform validate
 
-      - name: Import existing EKS Node Group
+
+      - name: Check Terraform State
         working-directory: terraform
+        shell: bash
         run: |
-          if terraform state list | grep -q '^module.nodegroups.aws_eks_node_group.nodes$'; then
-            echo "Node group is already managed by Terraform."
+          set -e
+
+          terraform state list > /tmp/terraform-state.txt
+
+          echo "Terraform resources currently managed:"
+          cat /tmp/terraform-state.txt
+
+          if grep -Fxq "module.nodegroups.aws_eks_node_group.nodes" /tmp/terraform-state.txt; then
+            echo "EKS node group is already managed by Terraform."
           else
-            echo "Checking whether node group exists in AWS..."
+            echo "EKS node group is NOT currently managed by Terraform."
 
             NODEGROUP=$(aws eks list-nodegroups \
               --cluster-name "$CLUSTER_NAME" \
@@ -108,15 +117,19 @@ jobs:
               --output text)
 
             if [ "$NODEGROUP" = "application-workers" ]; then
-              echo "Importing existing node group..."
+              echo "ERROR: Node group exists in AWS but not in Terraform state."
+              echo "Import is required before Terraform apply."
 
               terraform import \
-                'module.nodegroups.aws_eks_node_group.nodes' \
+                "module.nodegroups.aws_eks_node_group.nodes" \
                 "$CLUSTER_NAME:application-workers"
             else
-              echo "Node group does not exist. Terraform will create it."
+              echo "Node group does not exist in AWS."
+              echo "Terraform will create it."
             fi
           fi
+
+
 
 
       # -----------------------------------------------------
