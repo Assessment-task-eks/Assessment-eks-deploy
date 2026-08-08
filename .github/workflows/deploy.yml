@@ -739,3 +739,55 @@ jobs:
           echo "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}"
 
           echo "========================================"
+
+            # ------------------------------------------------------
+      # ------------------------------------------------------
+      # 7. DELETE KUBERNETES APPLICATIONS
+      # ------------------------------------------------------
+      - name: Delete Kubernetes applications
+        shell: bash
+        run: |
+          set +e
+
+          if kubectl cluster-info >/dev/null 2>&1; then
+
+            echo "Deleting Bank API..."
+            kubectl delete \
+              -f ../kubernetes/bank-api-service.yaml \
+              --ignore-not-found=true
+
+            kubectl delete \
+              -f ../kubernetes/bank-api-deployment.yaml \
+              --ignore-not-found=true
+
+            echo "Deleting UPI API..."
+            kubectl delete \
+              -f ../kubernetes/upi-api-service.yaml \
+              --ignore-not-found=true
+
+            kubectl delete \
+              -f ../kubernetes/upi-api-deployment.yaml \
+              --ignore-not-found=true
+
+          else
+
+            echo "Kubernetes cluster is not reachable."
+
+          fi
+
+          set -e
+
+      # 8. TERRAFORM DESTROY
+      # ------------------------------------------------------
+      - name: Terraform Destroy
+        run: |
+          terraform destroy -auto-approve
+
+      - name: Destroy verification
+        shell: bash
+        run: |
+          echo "========================================"
+          echo "DESTROY COMPLETED"
+          echo "========================================"
+
+          terraform state list || true
