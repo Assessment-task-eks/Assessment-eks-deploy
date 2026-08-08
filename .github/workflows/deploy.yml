@@ -295,6 +295,59 @@ jobs:
 
 
       # ========================================================
+      # HANDLE FAILED NODE GROUP (AUTO-RECOVERY)
+      # ========================================================
+
+      - name: Handle Failed Node Group
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -e
+
+          STATUS=$(aws eks describe-nodegroup \
+            --cluster-name "$CLUSTER_NAME" \
+            --nodegroup-name "application-workers" \
+            --region "$AWS_REGION" \
+            --query "nodegroup.status" \
+            --output text 2>/dev/null || echo "NOT_FOUND")
+
+          echo "Current node group status: $STATUS"
+
+          if [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "DEGRADED" ]; then
+
+            echo "Node group is in $STATUS state. Deleting so it can be recreated..."
+
+            aws eks delete-nodegroup \
+              --cluster-name "$CLUSTER_NAME" \
+              --nodegroup-name "application-workers" \
+              --region "$AWS_REGION"
+
+            echo "Waiting for node group deletion to complete..."
+
+            aws eks wait nodegroup-deleted \
+              --cluster-name "$CLUSTER_NAME" \
+              --nodegroup-name "application-workers" \
+              --region "$AWS_REGION"
+
+            echo "Node group deleted."
+            echo "Removing stale resource from Terraform state..."
+
+            terraform state rm module.nodegroups.aws_eks_node_group.nodes || true
+
+            echo "Re-applying Terraform to recreate the node group..."
+
+            terraform apply \
+              -input=false \
+              -auto-approve
+
+          else
+
+            echo "No recovery action needed."
+
+          fi
+
+
+      # ========================================================
       # VERIFY EKS NODE GROUP
       # ========================================================
 
