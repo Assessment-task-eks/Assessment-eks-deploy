@@ -58,6 +58,27 @@ spec:
 
                 - upi
 
+        podAntiAffinity:
+
+          preferredDuringSchedulingIgnoredDuringExecution:
+
+          - weight: 100
+
+            podAffinityTerm:
+
+              labelSelector:
+
+                matchExpressions:
+
+                - key: app
+
+                  operator: In
+
+                  values:
+                  - upi-api
+
+              topologyKey: kubernetes.io/hostname
+
 
 
       containers:

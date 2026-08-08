@@ -39,6 +39,27 @@ spec:
                 values:
                 - bank
 
+        podAntiAffinity:
+
+          preferredDuringSchedulingIgnoredDuringExecution:
+
+          - weight: 100
+
+            podAffinityTerm:
+
+              labelSelector:
+
+                matchExpressions:
+
+                - key: app
+
+                  operator: In
+
+                  values:
+                  - bank-api
+
+              topologyKey: kubernetes.io/hostname
+
 
       containers:
 

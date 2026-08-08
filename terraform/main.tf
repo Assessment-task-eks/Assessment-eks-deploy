@@ -43,12 +43,22 @@ module "nodegroups" {
 
   cluster_name = module.eks.cluster_name
 
-  subnet_ids = module.vpc.private_subnet_ids
+  # Node pair 1 & 4: bank-api, spread across two different AZs
+  bank_subnet_ids = [
+    module.vpc.private_subnet_ids[0],
+    module.vpc.private_subnet_ids[3]
+  ]
 
-  node_instance_type = var.node_instance_type
-  desired_nodes      = var.desired_nodes
-  min_nodes          = var.min_nodes
-  max_nodes          = var.max_nodes
+  # Node pair 2 & 3: upi-api, spread across two different AZs
+  upi_subnet_ids = [
+    module.vpc.private_subnet_ids[1],
+    module.vpc.private_subnet_ids[2]
+  ]
+
+  node_instance_type      = var.node_instance_type
+  desired_nodes_per_group = var.desired_nodes_per_group
+  min_nodes_per_group     = var.min_nodes_per_group
+  max_nodes_per_group     = var.max_nodes_per_group
 
   depends_on = [
     module.eks
@@ -76,7 +86,6 @@ terraform {
     region = "us-east-1"
   }
 }
-
 
 
 

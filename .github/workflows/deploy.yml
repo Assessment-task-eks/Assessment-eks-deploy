@@ -202,10 +202,10 @@ jobs:
 
 
       # ========================================================
-      # IMPORT EXISTING NODE GROUP
+      # IMPORT EXISTING NODE GROUPS (bank-workers / upi-workers)
       # ========================================================
 
-      - name: Import Existing EKS Node Group
+      - name: Import Existing EKS Node Groups
         working-directory: terraform
         shell: bash
         run: |
@@ -215,38 +215,47 @@ jobs:
 
           terraform state list > /tmp/terraform-state.txt
 
-          if grep -Fxq "module.nodegroups.aws_eks_node_group.nodes" /tmp/terraform-state.txt; then
+          for PAIR in "bank:bank-workers" "upi:upi-workers"; do
 
-            echo "Node group is already managed by Terraform."
+            RESOURCE_KEY="${PAIR%%:*}"
+            NODEGROUP_NAME="${PAIR##*:}"
 
-          else
+            echo "--- Checking $NODEGROUP_NAME ---"
 
-            echo "Node group is NOT in Terraform state."
-            echo "Checking AWS..."
+            if grep -Fxq "module.nodegroups.aws_eks_node_group.$RESOURCE_KEY" /tmp/terraform-state.txt; then
 
-            NODEGROUP=$(aws eks list-nodegroups \
-              --cluster-name "$CLUSTER_NAME" \
-              --region "$AWS_REGION" \
-              --query "nodegroups[?@=='application-workers'] | [0]" \
-              --output text)
-
-            if [ "$NODEGROUP" = "application-workers" ]; then
-
-              echo "Existing node group found."
-              echo "Importing application-workers..."
-
-              terraform import \
-                "module.nodegroups.aws_eks_node_group.nodes" \
-                "$CLUSTER_NAME:application-workers"
+              echo "$NODEGROUP_NAME is already managed by Terraform."
 
             else
 
-              echo "Node group does not exist."
-              echo "Terraform will create application-workers."
+              echo "$NODEGROUP_NAME is NOT in Terraform state."
+              echo "Checking AWS..."
+
+              NODEGROUP=$(aws eks list-nodegroups \
+                --cluster-name "$CLUSTER_NAME" \
+                --region "$AWS_REGION" \
+                --query "nodegroups[?@=='$NODEGROUP_NAME'] | [0]" \
+                --output text)
+
+              if [ "$NODEGROUP" = "$NODEGROUP_NAME" ]; then
+
+                echo "Existing node group found."
+                echo "Importing $NODEGROUP_NAME..."
+
+                terraform import \
+                  "module.nodegroups.aws_eks_node_group.$RESOURCE_KEY" \
+                  "$CLUSTER_NAME:$NODEGROUP_NAME"
+
+              else
+
+                echo "Node group does not exist."
+                echo "Terraform will create $NODEGROUP_NAME."
+
+              fi
 
             fi
 
-          fi
+          done
 
 
       # ========================================================
@@ -295,46 +304,61 @@ jobs:
 
 
       # ========================================================
-      # HANDLE FAILED NODE GROUP (AUTO-RECOVERY)
+      # HANDLE FAILED NODE GROUPS (AUTO-RECOVERY)
       # ========================================================
 
-      - name: Handle Failed Node Group
+      - name: Handle Failed Node Groups
         working-directory: terraform
         shell: bash
         run: |
           set -e
 
-          STATUS=$(aws eks describe-nodegroup \
-            --cluster-name "$CLUSTER_NAME" \
-            --nodegroup-name "application-workers" \
-            --region "$AWS_REGION" \
-            --query "nodegroup.status" \
-            --output text 2>/dev/null || echo "NOT_FOUND")
+          NEEDS_REAPPLY=false
 
-          echo "Current node group status: $STATUS"
+          for PAIR in "bank:bank-workers" "upi:upi-workers"; do
 
-          if [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "DEGRADED" ]; then
+            RESOURCE_KEY="${PAIR%%:*}"
+            NODEGROUP_NAME="${PAIR##*:}"
 
-            echo "Node group is in $STATUS state. Deleting so it can be recreated..."
-
-            aws eks delete-nodegroup \
+            STATUS=$(aws eks describe-nodegroup \
               --cluster-name "$CLUSTER_NAME" \
-              --nodegroup-name "application-workers" \
-              --region "$AWS_REGION"
+              --nodegroup-name "$NODEGROUP_NAME" \
+              --region "$AWS_REGION" \
+              --query "nodegroup.status" \
+              --output text 2>/dev/null || echo "NOT_FOUND")
 
-            echo "Waiting for node group deletion to complete..."
+            echo "$NODEGROUP_NAME status: $STATUS"
 
-            aws eks wait nodegroup-deleted \
-              --cluster-name "$CLUSTER_NAME" \
-              --nodegroup-name "application-workers" \
-              --region "$AWS_REGION"
+            if [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "DEGRADED" ]; then
 
-            echo "Node group deleted."
-            echo "Removing stale resource from Terraform state..."
+              echo "$NODEGROUP_NAME is in $STATUS state. Deleting so it can be recreated..."
 
-            terraform state rm module.nodegroups.aws_eks_node_group.nodes || true
+              aws eks delete-nodegroup \
+                --cluster-name "$CLUSTER_NAME" \
+                --nodegroup-name "$NODEGROUP_NAME" \
+                --region "$AWS_REGION"
 
-            echo "Re-applying Terraform to recreate the node group..."
+              echo "Waiting for $NODEGROUP_NAME deletion to complete..."
+
+              aws eks wait nodegroup-deleted \
+                --cluster-name "$CLUSTER_NAME" \
+                --nodegroup-name "$NODEGROUP_NAME" \
+                --region "$AWS_REGION"
+
+              echo "$NODEGROUP_NAME deleted."
+              echo "Removing stale resource from Terraform state..."
+
+              terraform state rm "module.nodegroups.aws_eks_node_group.$RESOURCE_KEY" || true
+
+              NEEDS_REAPPLY=true
+
+            fi
+
+          done
+
+          if [ "$NEEDS_REAPPLY" = true ]; then
+
+            echo "Re-applying Terraform to recreate failed node group(s)..."
 
             terraform apply \
               -input=false \
@@ -348,35 +372,43 @@ jobs:
 
 
       # ========================================================
-      # VERIFY EKS NODE GROUP
+      # VERIFY EKS NODE GROUPS
       # ========================================================
 
-      - name: Verify EKS Node Group
+      - name: Verify EKS Node Groups
         run: |
-          echo "Checking EKS node group..."
+          for NODEGROUP_NAME in bank-workers upi-workers; do
 
-          aws eks describe-nodegroup \
-            --cluster-name "$CLUSTER_NAME" \
-            --nodegroup-name "application-workers" \
-            --region "$AWS_REGION" \
-            --query "nodegroup.status" \
-            --output text
+            echo "Checking $NODEGROUP_NAME..."
+
+            aws eks describe-nodegroup \
+              --cluster-name "$CLUSTER_NAME" \
+              --nodegroup-name "$NODEGROUP_NAME" \
+              --region "$AWS_REGION" \
+              --query "nodegroup.status" \
+              --output text
+
+          done
 
 
       # ========================================================
-      # WAIT FOR NODE GROUP TO BECOME ACTIVE
+      # WAIT FOR NODE GROUPS TO BECOME ACTIVE
       # ========================================================
 
-      - name: Wait for Node Group Active
+      - name: Wait for Node Groups Active
         run: |
-          echo "Waiting for node group to reach ACTIVE status..."
+          for NODEGROUP_NAME in bank-workers upi-workers; do
 
-          aws eks wait nodegroup-active \
-            --cluster-name "$CLUSTER_NAME" \
-            --nodegroup-name "application-workers" \
-            --region "$AWS_REGION"
+            echo "Waiting for $NODEGROUP_NAME to reach ACTIVE status..."
 
-          echo "Node group is ACTIVE."
+            aws eks wait nodegroup-active \
+              --cluster-name "$CLUSTER_NAME" \
+              --nodegroup-name "$NODEGROUP_NAME" \
+              --region "$AWS_REGION"
+
+            echo "$NODEGROUP_NAME is ACTIVE."
+
+          done
 
 
       # ========================================================
