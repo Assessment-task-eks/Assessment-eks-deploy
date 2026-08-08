@@ -1,3 +1,8 @@
+
+# =========================================================
+# EKS Worker Node IAM Role
+# =========================================================
+
 resource "aws_iam_role" "node" {
   name = "${var.cluster_name}-node-role"
 
@@ -18,46 +23,74 @@ resource "aws_iam_role" "node" {
   })
 }
 
+
+# =========================================================
+# EKS Worker Node Policy
+# =========================================================
+
 resource "aws_iam_role_policy_attachment" "worker" {
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
+
+
+# =========================================================
+# AWS VPC CNI Policy
+# =========================================================
 
 resource "aws_iam_role_policy_attachment" "cni" {
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
+
+# =========================================================
+# ECR Read Only Policy
+# =========================================================
+
 resource "aws_iam_role_policy_attachment" "registry" {
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-# Optional but recommended for SSM access
+
+# =========================================================
+# SSM Policy
+# =========================================================
+
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+
+# =========================================================
+# EKS Managed Node Group
+# =========================================================
+
 resource "aws_eks_node_group" "nodes" {
   cluster_name    = var.cluster_name
   node_group_name = "application-workers"
-  node_role_arn   = aws_iam_role.node.arn
-  subnet_ids      = var.subnet_ids
+
+  node_role_arn = aws_iam_role.node.arn
+
+  subnet_ids = var.subnet_ids
 
   instance_types = [
     var.node_instance_type
   ]
+
+  capacity_type = "ON_DEMAND"
+
+  # Amazon Linux 2023
+  # Required for EKS versions newer than Kubernetes 1.32
+  ami_type = "AL2023_x86_64_STANDARD"
 
   scaling_config {
     desired_size = var.desired_nodes
     min_size     = var.min_nodes
     max_size     = var.max_nodes
   }
-
-  capacity_type = "ON_DEMAND"
-
-  ami_type = "AL2023_x86_64_STANDARD"
 
   update_config {
     max_unavailable = 1
@@ -74,15 +107,3 @@ resource "aws_eks_node_group" "nodes" {
     Name = "application-workers"
   }
 }
-
-resource "aws_eks_access_entry" "nodes" {
-  cluster_name  = var.cluster_name
-  principal_arn = aws_iam_role.node.arn
-  type          = "EC2_LINUX"
-
-  depends_on = [
-    aws_iam_role.node
-  ]
-
-}
-

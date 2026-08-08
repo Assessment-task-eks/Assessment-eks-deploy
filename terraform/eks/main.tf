@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role" "eks_cluster" {
   name = "${var.cluster_name}-cluster-role"
 
@@ -39,6 +41,41 @@ resource "aws_eks_cluster" "cluster" {
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
+}
+
+
+# ---------------------------------------------------------
+# EKS Access Entry for the IAM identity running Terraform
+# ---------------------------------------------------------
+
+resource "aws_eks_access_entry" "admin" {
+  cluster_name  = aws_eks_cluster.cluster.name
+  principal_arn = data.aws_caller_identity.current.arn
+  type          = "STANDARD"
+
+  depends_on = [
+    aws_eks_cluster.cluster
+  ]
+}
+
+
+# ---------------------------------------------------------
+# Cluster Administrator Access
+# ---------------------------------------------------------
+
+resource "aws_eks_access_policy_association" "admin" {
+  cluster_name  = aws_eks_cluster.cluster.name
+  principal_arn = data.aws_caller_identity.current.arn
+
+  policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [
+    aws_eks_access_entry.admin
   ]
 }
 

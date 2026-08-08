@@ -1,54 +1,30 @@
 variable "cluster_name" {
-
-  type = string
-
+  description = "EKS Cluster Name"
+  type        = string
 }
-
 
 variable "subnet_ids" {
-
-  type = list(string)
-
+  description = "Private subnet IDs"
+  type        = list(string)
 }
-
 
 variable "node_instance_type" {
-
-  type = string
-
+  description = "EC2 instance type for worker nodes"
+  type        = string
 }
-
 
 variable "desired_nodes" {
-
-  type = number
-
+  description = "Desired number of worker nodes"
+  type        = number
 }
-
 
 variable "min_nodes" {
-
-  type = number
-
+  description = "Minimum number of worker nodes"
+  type        = number
 }
-
 
 variable "max_nodes" {
-
-  type = number
-
+  description = "Maximum number of worker nodes"
+  type        = number
 }
 
-
-variable "cluster_endpoint" {
-
-  type = string
-
-}
-
-
-variable "cluster_ca" {
-
-  type = string
-
-}

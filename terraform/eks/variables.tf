@@ -1,19 +1,14 @@
 variable "cluster_name" {
-
-  type = string
-
+  description = "EKS Cluster Name"
+  type        = string
 }
-
 
 variable "vpc_id" {
-
-  type = string
-
+  description = "VPC ID"
+  type        = string
 }
 
-
 variable "subnet_ids" {
-
-  type = list(string)
-
+  description = "Private subnet IDs for EKS"
+  type        = list(string)
 }
