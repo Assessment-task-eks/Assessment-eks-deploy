@@ -38,15 +38,11 @@ module "nodegroups" {
 
   cluster_name = module.eks.cluster_name
 
-  # Bank API
-  # Private subnet 0 + private subnet 3
   bank_subnet_ids = [
     module.vpc.private_subnet_ids[0],
     module.vpc.private_subnet_ids[3]
   ]
 
-  # UPI API
-  # Private subnet 1 + private subnet 2
   upi_subnet_ids = [
     module.vpc.private_subnet_ids[1],
     module.vpc.private_subnet_ids[2]

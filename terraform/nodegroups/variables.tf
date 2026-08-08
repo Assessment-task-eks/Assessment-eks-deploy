@@ -1,45 +1,39 @@
+
 variable "cluster_name" {
-  description = "EKS Cluster Name"
+  description = "EKS cluster name"
   type        = string
 }
 
 variable "bank_subnet_ids" {
-  description = "Private subnet IDs for Bank API node group"
+  description = "Private subnet IDs for Bank API nodes"
   type        = list(string)
-
-  validation {
-    condition     = length(var.bank_subnet_ids) == 2
-    error_message = "bank_subnet_ids must contain exactly 2 subnet IDs."
-  }
 }
 
 variable "upi_subnet_ids" {
-  description = "Private subnet IDs for UPI API node group"
+  description = "Private subnet IDs for UPI API nodes"
   type        = list(string)
-
-  validation {
-    condition     = length(var.upi_subnet_ids) == 2
-    error_message = "upi_subnet_ids must contain exactly 2 subnet IDs."
-  }
 }
 
 variable "node_instance_type" {
-  description = "EC2 instance type for worker nodes"
+  description = "EC2 instance type for EKS worker nodes"
   type        = string
+  default     = "t3.medium"
 }
 
 variable "desired_nodes_per_group" {
   description = "Desired number of nodes in each node group"
   type        = number
+  default     = 2
 }
 
 variable "min_nodes_per_group" {
   description = "Minimum number of nodes in each node group"
   type        = number
+  default     = 2
 }
 
 variable "max_nodes_per_group" {
   description = "Maximum number of nodes in each node group"
   type        = number
+  default     = 2
 }
-
