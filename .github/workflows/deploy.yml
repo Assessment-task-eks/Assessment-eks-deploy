@@ -311,6 +311,22 @@ jobs:
 
 
       # ========================================================
+      # WAIT FOR NODE GROUP TO BECOME ACTIVE
+      # ========================================================
+
+      - name: Wait for Node Group Active
+        run: |
+          echo "Waiting for node group to reach ACTIVE status..."
+
+          aws eks wait nodegroup-active \
+            --cluster-name "$CLUSTER_NAME" \
+            --nodegroup-name "application-workers" \
+            --region "$AWS_REGION"
+
+          echo "Node group is ACTIVE."
+
+
+      # ========================================================
       # UPDATE KUBECONFIG
       # ========================================================
 
@@ -319,6 +335,24 @@ jobs:
           aws eks update-kubeconfig \
             --region "$AWS_REGION" \
             --name "$CLUSTER_NAME"
+
+
+      # ========================================================
+      # WAIT FOR NODES TO BE READY
+      # ========================================================
+
+      - name: Wait for Kubernetes Nodes Ready
+        run: |
+          echo "Waiting for nodes to register and become Ready..."
+
+          kubectl wait \
+            --for=condition=Ready \
+            nodes \
+            --all \
+            --timeout=300s
+
+          echo "All nodes Ready:"
+          kubectl get nodes -o wide
 
 
       # ========================================================
@@ -564,7 +598,7 @@ jobs:
 
           kubectl rollout status \
             deployment/bank-api \
-            --timeout=180s
+            --timeout=300s
 
 
       # ========================================================
@@ -576,7 +610,7 @@ jobs:
 
           kubectl rollout status \
             deployment/upi-api \
-            --timeout=180s
+            --timeout=300s
 
 
       # ========================================================
