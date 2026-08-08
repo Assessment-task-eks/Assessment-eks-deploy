@@ -40,3 +40,5 @@ additional_admin_arns = [
   "arn:aws:iam::033142159665:root"
 ]
 
+bank_api_repository = "bank-api"
+upi_api_repository  = "upi-api"
