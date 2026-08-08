@@ -30,5 +30,5 @@ max_nodes = 4
 # Add IAM users/roles here that need EKS console/kubectl admin access
 # in addition to whichever identity runs `terraform apply` in CI.
 additional_admin_arns = [
-  "arn:aws:iam::033142159665:user/Ramkumar"
+  "arn:aws:iam::033142159665:user/iac"
 ]
