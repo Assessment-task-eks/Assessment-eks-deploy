@@ -1,11 +1,11 @@
 module "vpc" {
   source = "./vpc"
 
-  vpc_name = var.vpc_name
-
-  public_subnets = var.public_subnets
-
-  private_subnets = var.private_subnets
+  vpc_name           = var.vpc_name
+  vpc_cidr           = var.vpc_cidr
+  availability_zones = var.availability_zones
+  public_subnets     = var.public_subnets
+  private_subnets    = var.private_subnets
 }
 
 
@@ -13,8 +13,9 @@ module "eks" {
   source = "./eks"
 
   cluster_name = var.cluster_name
+  subnet_ids   = module.vpc.private_subnet_ids
 
-  subnet_ids = module.vpc.private_subnet_ids
+  additional_admin_arns = var.additional_admin_arns
 
   depends_on = [
     module.vpc
@@ -27,17 +28,15 @@ module "nodegroups" {
 
   cluster_name = module.eks.cluster_name
 
-  # Bank API nodes
-  # subnet 0 + subnet 3
-
+  # Bank API
+  # Private subnet 0 + private subnet 3
   bank_subnet_ids = [
     module.vpc.private_subnet_ids[0],
     module.vpc.private_subnet_ids[3]
   ]
 
-  # UPI API nodes
-  # subnet 1 + subnet 2
-
+  # UPI API
+  # Private subnet 1 + private subnet 2
   upi_subnet_ids = [
     module.vpc.private_subnet_ids[1],
     module.vpc.private_subnet_ids[2]

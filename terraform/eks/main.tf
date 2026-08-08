@@ -20,10 +20,12 @@ resource "aws_iam_role" "eks_cluster" {
   })
 }
 
+
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   role       = aws_iam_role.eks_cluster.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
+
 
 resource "aws_eks_cluster" "cluster" {
   name     = var.cluster_name
@@ -44,6 +46,8 @@ resource "aws_eks_cluster" "cluster" {
   ]
 }
 
+
+# Current Terraform/IAM identity
 resource "aws_eks_access_entry" "admin" {
   cluster_name  = aws_eks_cluster.cluster.name
   principal_arn = data.aws_caller_identity.current.arn
@@ -53,6 +57,7 @@ resource "aws_eks_access_entry" "admin" {
     aws_eks_cluster.cluster
   ]
 }
+
 
 resource "aws_eks_access_policy_association" "admin" {
   cluster_name  = aws_eks_cluster.cluster.name
@@ -66,5 +71,37 @@ resource "aws_eks_access_policy_association" "admin" {
 
   depends_on = [
     aws_eks_access_entry.admin
+  ]
+}
+
+
+# Additional administrators
+resource "aws_eks_access_entry" "additional_admins" {
+  for_each = toset(var.additional_admin_arns)
+
+  cluster_name  = aws_eks_cluster.cluster.name
+  principal_arn = each.value
+  type          = "STANDARD"
+
+  depends_on = [
+    aws_eks_cluster.cluster
+  ]
+}
+
+
+resource "aws_eks_access_policy_association" "additional_admins" {
+  for_each = toset(var.additional_admin_arns)
+
+  cluster_name  = aws_eks_cluster.cluster.name
+  principal_arn = each.value
+
+  policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [
+    aws_eks_access_entry.additional_admins
   ]
 }
