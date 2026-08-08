@@ -1,8 +1,11 @@
 module "vpc" {
   source = "./vpc"
 
-  vpc_cidr           = var.vpc_cidr
-  availability_zones = var.availability_zones
+  vpc_name = var.vpc_name
+
+  public_subnets = var.public_subnets
+
+  private_subnets = var.private_subnets
 }
 
 
@@ -26,7 +29,6 @@ module "nodegroups" {
 
   # Bank API nodes
   # subnet 0 + subnet 3
-  # Different Availability Zones
 
   bank_subnet_ids = [
     module.vpc.private_subnet_ids[0],
@@ -35,7 +37,6 @@ module "nodegroups" {
 
   # UPI API nodes
   # subnet 1 + subnet 2
-  # Different Availability Zones
 
   upi_subnet_ids = [
     module.vpc.private_subnet_ids[1],
