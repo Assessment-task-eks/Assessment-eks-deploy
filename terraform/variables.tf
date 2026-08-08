@@ -1,60 +1,14 @@
-variable "cluster_name" {
-  description = "EKS Cluster Name"
-  type        = string
-}
-
-variable "vpc_name" {
-  description = "VPC Name"
-  type        = string
-}
-
-
-variable "vpc_cidr" {
-  description = "VPC CIDR Block"
-  type        = string
-}
-
-variable "public_subnets" {
-  description = "Public Subnets"
-  type        = list(string)
-}
-
-
-variable "private_subnets" {
-  description = "Private Subnets"
-  type        = list(string)
-}
-
-
-
-variable "availability_zones" {
-  description = "Availability Zones"
-  type        = list(string)
-}
-
-variable "node_instance_type" {
-  description = "EC2 Instance Type"
-  type        = string
-}
-
-variable "desired_nodes" {
-  description = "Desired Worker Nodes"
+variable "desired_nodes_per_group" {
+  description = "Desired number of nodes in each EKS node group"
   type        = number
 }
 
-variable "min_nodes" {
-  description = "Minimum Worker Nodes"
+variable "min_nodes_per_group" {
+  description = "Minimum number of nodes in each EKS node group"
   type        = number
 }
 
-variable "max_nodes" {
-  description = "Maximum Worker Nodes"
+variable "max_nodes_per_group" {
+  description = "Maximum number of nodes in each EKS node group"
   type        = number
-}
-
-
-variable "additional_admin_arns" {
-  description = "Extra IAM principal ARNs (console users, other engineers) to grant EKS cluster admin access"
-  type        = list(string)
-  default     = []
 }
