@@ -12,6 +12,7 @@ resource "aws_ecr_repository" "bank_api" {
 }
 
 
+
 resource "aws_ecr_repository" "upi_api" {
   name                 = var.upi_api_repository
   image_tag_mutability = "MUTABLE"
