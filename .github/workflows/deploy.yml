@@ -5,6 +5,8 @@ on:
     branches:
       - main
 
+  workflow_dispatch:
+
 env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: assessment-eks
@@ -17,66 +19,62 @@ permissions:
 
 jobs:
 
-  # =========================================================
-  # Terraform Infrastructure
-  # =========================================================
+  # ============================================================
+  # JOB 1: TERRAFORM INFRASTRUCTURE
+  # ============================================================
 
   terraform:
+
     name: Terraform Infrastructure
+
     runs-on: ubuntu-latest
 
     steps:
 
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Checkout
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
+        with:
+          fetch-depth: 2
 
-      # -----------------------------------------------------
+
+      # --------------------------------------------------------
       # Configure AWS
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Verify AWS
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
-      - name: Verify AWS identity
+      - name: Verify AWS Login
         run: |
           aws sts get-caller-identity
 
 
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Setup Terraform
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
 
-      # -----------------------------------------------------
-      # Terraform Format
-      # -----------------------------------------------------
-
-      - name: Terraform Format
-        working-directory: terraform
-        run: |
-          terraform fmt -check -recursive
-
-
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Terraform Init
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Init
         working-directory: terraform
@@ -84,31 +82,147 @@ jobs:
           terraform init -input=false
 
 
-      # -----------------------------------------------------
-      # Terraform Validate
-      # -----------------------------------------------------
+      # ========================================================
+      # GET CURRENT AWS IDENTITY
+      # ========================================================
 
-      - name: Terraform Validate
-        working-directory: terraform
+      - name: Get AWS Account and Principal
         run: |
-          terraform validate
+          ACCOUNT_ID=$(aws sts get-caller-identity \
+            --query Account \
+            --output text)
+
+          PRINCIPAL_ARN=$(aws sts get-caller-identity \
+            --query Arn \
+            --output text)
+
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
+          echo "PRINCIPAL_ARN=$PRINCIPAL_ARN" >> "$GITHUB_ENV"
+
+          echo "AWS Account: $ACCOUNT_ID"
+          echo "AWS Principal: $PRINCIPAL_ARN"
 
 
-      - name: Check Terraform State
+      # ========================================================
+      # IMPORT EXISTING EKS ADMIN ACCESS ENTRY
+      # ========================================================
+
+      - name: Import Existing EKS Admin Access Entry
         working-directory: terraform
         shell: bash
         run: |
           set -e
 
+          echo "Checking Terraform state..."
+
           terraform state list > /tmp/terraform-state.txt
 
-          echo "Terraform resources currently managed:"
-          cat /tmp/terraform-state.txt
+          if grep -Fxq "module.eks.aws_eks_access_entry.admin" /tmp/terraform-state.txt; then
+
+            echo "Admin access entry is already managed by Terraform."
+
+          else
+
+            echo "Admin access entry is NOT in Terraform state."
+            echo "Checking AWS..."
+
+            ACCESS_ENTRY=$(aws eks list-access-entries \
+              --cluster-name "$CLUSTER_NAME" \
+              --region "$AWS_REGION" \
+              --query "accessEntries[?@=='$PRINCIPAL_ARN'] | [0]" \
+              --output text)
+
+            if [ "$ACCESS_ENTRY" = "$PRINCIPAL_ARN" ]; then
+
+              echo "Existing admin access entry found."
+              echo "Importing into Terraform..."
+
+              terraform import \
+                "module.eks.aws_eks_access_entry.admin" \
+                "$CLUSTER_NAME:$PRINCIPAL_ARN"
+
+            else
+
+              echo "Admin access entry does not exist."
+              echo "Terraform will create it."
+
+            fi
+
+          fi
+
+
+      # ========================================================
+      # IMPORT EXISTING CLUSTER ADMIN POLICY ASSOCIATION
+      # ========================================================
+
+      - name: Import Existing EKS Admin Policy Association
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking Terraform state..."
+
+          terraform state list > /tmp/terraform-state.txt
+
+          if grep -Fxq "module.eks.aws_eks_access_policy_association.admin" /tmp/terraform-state.txt; then
+
+            echo "Admin policy association is already managed by Terraform."
+
+          else
+
+            echo "Checking AWS for existing ClusterAdmin policy..."
+
+            POLICY_ARN="arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+            POLICY_COUNT=$(aws eks list-associated-access-policies \
+              --cluster-name "$CLUSTER_NAME" \
+              --principal-arn "$PRINCIPAL_ARN" \
+              --region "$AWS_REGION" \
+              --query "associatedAccessPolicies[?policyArn=='$POLICY_ARN'] | length(@)" \
+              --output text)
+
+            if [ "$POLICY_COUNT" = "1" ]; then
+
+              echo "Existing ClusterAdmin policy association found."
+              echo "Importing into Terraform..."
+
+              terraform import \
+                "module.eks.aws_eks_access_policy_association.admin" \
+                "$CLUSTER_NAME#$PRINCIPAL_ARN#$POLICY_ARN"
+
+            else
+
+              echo "ClusterAdmin policy association does not exist."
+              echo "Terraform will create it."
+
+            fi
+
+          fi
+
+
+      # ========================================================
+      # IMPORT EXISTING NODE GROUP
+      # ========================================================
+
+      - name: Import Existing EKS Node Group
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking Terraform state..."
+
+          terraform state list > /tmp/terraform-state.txt
 
           if grep -Fxq "module.nodegroups.aws_eks_node_group.nodes" /tmp/terraform-state.txt; then
-            echo "EKS node group is already managed by Terraform."
+
+            echo "Node group is already managed by Terraform."
+
           else
-            echo "EKS node group is NOT currently managed by Terraform."
+
+            echo "Node group is NOT in Terraform state."
+            echo "Checking AWS..."
 
             NODEGROUP=$(aws eks list-nodegroups \
               --cluster-name "$CLUSTER_NAME" \
@@ -117,60 +231,116 @@ jobs:
               --output text)
 
             if [ "$NODEGROUP" = "application-workers" ]; then
-              echo "ERROR: Node group exists in AWS but not in Terraform state."
-              echo "Import is required before Terraform apply."
+
+              echo "Existing node group found."
+              echo "Importing application-workers..."
 
               terraform import \
                 "module.nodegroups.aws_eks_node_group.nodes" \
                 "$CLUSTER_NAME:application-workers"
+
             else
-              echo "Node group does not exist in AWS."
-              echo "Terraform will create it."
+
+              echo "Node group does not exist."
+              echo "Terraform will create application-workers."
+
             fi
+
           fi
 
 
+      # ========================================================
+      # TERRAFORM FORMAT
+      # ========================================================
+
+      - name: Terraform Format
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive
 
 
-      # -----------------------------------------------------
-      # Terraform Plan
-      # -----------------------------------------------------
+      # ========================================================
+      # TERRAFORM VALIDATE
+      # ========================================================
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: |
+          terraform validate
+
+
+      # ========================================================
+      # TERRAFORM PLAN
+      # ========================================================
 
       - name: Terraform Plan
         working-directory: terraform
         run: |
-          terraform plan -input=false
+          terraform plan \
+            -input=false \
+            -out=tfplan
 
 
-      # -----------------------------------------------------
-      # Terraform Apply
-      # -----------------------------------------------------
+      # ========================================================
+      # TERRAFORM APPLY
+      # ========================================================
 
       - name: Terraform Apply
         working-directory: terraform
         run: |
-          terraform apply -auto-approve -input=false
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            tfplan
 
 
-      # -----------------------------------------------------
-      # Verify EKS Cluster
-      # -----------------------------------------------------
+      # ========================================================
+      # VERIFY EKS NODE GROUP
+      # ========================================================
 
-      - name: Verify EKS cluster
+      - name: Verify EKS Node Group
         run: |
-          aws eks describe-cluster \
-            --name "$CLUSTER_NAME" \
+          echo "Checking EKS node group..."
+
+          aws eks describe-nodegroup \
+            --cluster-name "$CLUSTER_NAME" \
+            --nodegroup-name "application-workers" \
             --region "$AWS_REGION" \
-            --query "cluster.status" \
+            --query "nodegroup.status" \
             --output text
 
 
-  # =========================================================
-  # Build Docker Images + Deploy to EKS
-  # =========================================================
+      # ========================================================
+      # UPDATE KUBECONFIG
+      # ========================================================
+
+      - name: Update EKS Kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name "$CLUSTER_NAME"
+
+
+      # ========================================================
+      # VERIFY KUBERNETES ACCESS
+      # ========================================================
+
+      - name: Verify Kubernetes Access
+        run: |
+          kubectl cluster-info
+
+          echo "Kubernetes nodes:"
+          kubectl get nodes -o wide
+
+
+  # ============================================================
+  # JOB 2: BUILD AND DEPLOY APPLICATIONS
+  # ============================================================
 
   deploy:
-    name: Build Images and Deploy to EKS
+
+    name: Build Docker Images and Deploy to EKS
+
     runs-on: ubuntu-latest
 
     needs:
@@ -178,213 +348,275 @@ jobs:
 
     steps:
 
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Checkout
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
 
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Configure AWS
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # -----------------------------------------------------
+      # --------------------------------------------------------
       # Verify AWS
-      # -----------------------------------------------------
+      # --------------------------------------------------------
 
-      - name: Verify AWS identity
+      - name: Verify AWS Login
         run: |
           aws sts get-caller-identity
 
 
-      # -----------------------------------------------------
-      # Get AWS Account ID
-      # -----------------------------------------------------
+      # --------------------------------------------------------
+      # Get Account ID
+      # --------------------------------------------------------
 
       - name: Get AWS Account ID
         run: |
-          echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
+          ACCOUNT_ID=$(aws sts get-caller-identity \
+            --query Account \
+            --output text)
+
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
+
+          echo "AWS Account ID: $ACCOUNT_ID"
 
 
-      # -----------------------------------------------------
-      # Login to ECR
-      # -----------------------------------------------------
+      # ========================================================
+      # LOGIN TO ECR
+      # ========================================================
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
 
-      # =====================================================
-      # Build Docker Images
-      # =====================================================
+      # ========================================================
+      # VERIFY ECR REPOSITORIES
+      # ========================================================
 
-      - name: Build Bank API image
+      - name: Verify ECR Repositories
         run: |
+
+          aws ecr describe-repositories \
+            --repository-names "$BANK_API_IMAGE" \
+            --region "$AWS_REGION"
+
+          aws ecr describe-repositories \
+            --repository-names "$UPI_API_IMAGE" \
+            --region "$AWS_REGION"
+
+
+      # ========================================================
+      # BUILD BANK API
+      # ========================================================
+
+      - name: Build Bank API Image
+        run: |
+
           docker build \
             -t "$BANK_API_IMAGE:${{ github.sha }}" \
             ./apps/bank-api
 
 
-      - name: Build UPI API image
+      # ========================================================
+      # BUILD UPI API
+      # ========================================================
+
+      - name: Build UPI API Image
         run: |
+
           docker build \
             -t "$UPI_API_IMAGE:${{ github.sha }}" \
             ./apps/upi-api
 
 
-      # =====================================================
-      # Tag Docker Images
-      # =====================================================
+      # ========================================================
+      # TAG BANK API
+      # ========================================================
 
-      - name: Tag Bank API image
+      - name: Tag Bank API Image
         run: |
+
           docker tag \
             "$BANK_API_IMAGE:${{ github.sha }}" \
             "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}"
 
 
-      - name: Tag UPI API image
+      # ========================================================
+      # TAG UPI API
+      # ========================================================
+
+      - name: Tag UPI API Image
         run: |
+
           docker tag \
             "$UPI_API_IMAGE:${{ github.sha }}" \
             "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}"
 
 
-      # =====================================================
-      # Push Images to ECR
-      # =====================================================
+      # ========================================================
+      # PUSH BANK API
+      # ========================================================
 
-      - name: Push Bank API image
+      - name: Push Bank API Image
         run: |
+
           docker push \
             "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}"
 
 
-      - name: Push UPI API image
+      # ========================================================
+      # PUSH UPI API
+      # ========================================================
+
+      - name: Push UPI API Image
         run: |
+
           docker push \
             "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}"
 
 
-      # =====================================================
-      # Configure Kubernetes
-      # =====================================================
+      # ========================================================
+      # UPDATE KUBECONFIG
+      # ========================================================
 
-      - name: Update kubeconfig
+      - name: Update EKS Kubeconfig
         run: |
+
           aws eks update-kubeconfig \
             --region "$AWS_REGION" \
             --name "$CLUSTER_NAME"
 
 
-      # =====================================================
-      # Verify Kubernetes Access
-      # =====================================================
+      # ========================================================
+      # VERIFY CLUSTER
+      # ========================================================
 
-      - name: Verify Kubernetes connection
+      - name: Verify Kubernetes Cluster
         run: |
+
           kubectl cluster-info
-          kubectl get nodes
+
+          kubectl get nodes -o wide
 
 
-      # =====================================================
-      # Create/Update Kubernetes Namespace
-      # =====================================================
+      # ========================================================
+      # APPLY BANK API MANIFESTS
+      # ========================================================
 
-      - name: Apply namespaces
+      - name: Apply Bank API Kubernetes Manifests
         run: |
-          kubectl apply -f kubernetes/bank-api/
-          kubectl apply -f kubernetes/upi-api/
+
+          kubectl apply \
+            -f kubernetes/bank-api/
 
 
-      # =====================================================
-      # Update Bank API Image
-      # =====================================================
+      # ========================================================
+      # APPLY UPI API MANIFESTS
+      # ========================================================
 
-      - name: Update Bank API image
+      - name: Apply UPI API Kubernetes Manifests
         run: |
+
+          kubectl apply \
+            -f kubernetes/upi-api/
+
+
+      # ========================================================
+      # UPDATE BANK API IMAGE
+      # ========================================================
+
+      - name: Update Bank API Image
+        run: |
+
           kubectl set image deployment/bank-api \
             bank-api="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}"
 
 
-      # =====================================================
-      # Update UPI API Image
-      # =====================================================
+      # ========================================================
+      # UPDATE UPI API IMAGE
+      # ========================================================
 
-      - name: Update UPI API image
+      - name: Update UPI API Image
         run: |
+
           kubectl set image deployment/upi-api \
             upi-api="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}"
 
 
-      # =====================================================
-      # Wait for Bank API
-      # =====================================================
+      # ========================================================
+      # WAIT FOR BANK API
+      # ========================================================
 
-      - name: Wait for Bank API rollout
+      - name: Wait for Bank API Rollout
         run: |
+
           kubectl rollout status \
             deployment/bank-api \
             --timeout=180s
 
 
-      # =====================================================
-      # Wait for UPI API
-      # =====================================================
+      # ========================================================
+      # WAIT FOR UPI API
+      # ========================================================
 
-      - name: Wait for UPI API rollout
+      - name: Wait for UPI API Rollout
         run: |
+
           kubectl rollout status \
             deployment/upi-api \
             --timeout=180s
 
 
-      # =====================================================
-      # Verify Deployments
-      # =====================================================
+      # ========================================================
+      # VERIFY DEPLOYMENTS
+      # ========================================================
 
-      - name: Verify deployments
+      - name: Verify Kubernetes Deployments
         run: |
-          echo "======================================"
-          echo "Deployments"
-          echo "======================================"
 
-          kubectl get deployments
+          echo "Deployments:"
+          kubectl get deployments -A
 
-          echo "======================================"
-          echo "Pods"
-          echo "======================================"
+          echo "Pods:"
+          kubectl get pods -A -o wide
 
-          kubectl get pods -A
-
-          echo "======================================"
-          echo "Services"
-          echo "======================================"
-
+          echo "Services:"
           kubectl get services -A
 
 
-      # =====================================================
-      # Final Verification
-      # =====================================================
+      # ========================================================
+      # FINAL STATUS
+      # ========================================================
 
-      - name: Verify Bank API
+      - name: Deployment Complete
         run: |
-          kubectl get deployment bank-api
-          kubectl get pods -l app=bank-api
 
+          echo "========================================"
+          echo "EKS DEPLOYMENT COMPLETED SUCCESSFULLY"
+          echo "========================================"
 
-      - name: Verify UPI API
-        run: |
-          kubectl get deployment upi-api
-          kubectl get pods -l app=upi-api
+          echo "Cluster:"
+          echo "$CLUSTER_NAME"
+
+          echo "Region:"
+          echo "$AWS_REGION"
+
+          echo "Bank API image:"
+          echo "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}"
+
+          echo "UPI API image:"
+          echo "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}"
+
+          echo "========================================"
