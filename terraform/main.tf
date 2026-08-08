@@ -18,7 +18,13 @@ module "eks" {
   source = "./eks"
 
   cluster_name = var.cluster_name
-  subnet_ids   = module.vpc.private_subnet_ids
+
+  # EKS control plane must remain in
+  # the AZs used when the cluster was created.
+  subnet_ids = [
+    module.vpc.private_subnet_ids[0],
+    module.vpc.private_subnet_ids[1]
+  ]
 
   additional_admin_arns = var.additional_admin_arns
 
@@ -26,7 +32,6 @@ module "eks" {
     module.vpc
   ]
 }
-
 
 module "nodegroups" {
   source = "./nodegroups"
@@ -56,6 +61,7 @@ module "nodegroups" {
     module.eks
   ]
 }
+
 
 
 module "ecr" {
