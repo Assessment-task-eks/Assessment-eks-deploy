@@ -1,5 +1,3 @@
-
-
 cluster_name = "assessment-eks"
 
 vpc_name = "vpc-c"
@@ -26,8 +24,6 @@ node_instance_type = "t3.medium"
 desired_nodes = 4
 
 min_nodes = 4
-
-max_nodes = 4
 
 max_nodes = 4
 
