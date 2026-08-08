@@ -1,3 +1,8 @@
+provider "aws" {
+  region = "us-east-1"
+}
+
+
 module "vpc" {
   source = "./vpc"
 
@@ -58,4 +63,16 @@ module "ecr" {
 
   bank_api_repository = var.bank_api_repository
   upi_api_repository  = var.upi_api_repository
+}
+
+# =========================================================
+# Terraform Backend
+# =========================================================
+
+terraform {
+  backend "s3" {
+    bucket = "ram-test-eks"
+    key    = "terraform/terraform.tfstate"
+    region = "us-east-1"
+  }
 }
