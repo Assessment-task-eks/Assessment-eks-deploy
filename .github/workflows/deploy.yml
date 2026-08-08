@@ -17,11 +17,12 @@ env:
 permissions:
   contents: read
 
-jobs:
 
-  # ============================================================
-  # JOB 1: TERRAFORM INFRASTRUCTURE
-  # ============================================================
+# ============================================================
+# TERRAFORM INFRASTRUCTURE
+# ============================================================
+
+jobs:
 
   terraform:
 
@@ -31,9 +32,9 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------------
-      # Checkout
-      # --------------------------------------------------------
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
 
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -42,9 +43,9 @@ jobs:
           fetch-depth: 2
 
 
-      # --------------------------------------------------------
-      # Configure AWS
-      # --------------------------------------------------------
+      # ========================================================
+      # AWS CREDENTIALS
+      # ========================================================
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -55,39 +56,29 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # --------------------------------------------------------
-      # Verify AWS
-      # --------------------------------------------------------
+      # ========================================================
+      # VERIFY AWS
+      # ========================================================
 
       - name: Verify AWS Login
         run: |
           aws sts get-caller-identity
 
+          echo "AWS Region:"
+          echo "$AWS_REGION"
 
-      # --------------------------------------------------------
-      # Setup Terraform
-      # --------------------------------------------------------
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-
-      # --------------------------------------------------------
-      # Terraform Init
-      # --------------------------------------------------------
-
-      - name: Terraform Init
-        working-directory: terraform
-        run: |
-          terraform init -input=false
+          echo "EKS Cluster:"
+          echo "$CLUSTER_NAME"
 
 
       # ========================================================
-      # GET CURRENT AWS IDENTITY
+      # GET AWS PRINCIPAL
       # ========================================================
 
       - name: Get AWS Account and Principal
+        shell: bash
         run: |
+
           ACCOUNT_ID=$(aws sts get-caller-identity \
             --query Account \
             --output text)
@@ -99,8 +90,92 @@ jobs:
           echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
           echo "PRINCIPAL_ARN=$PRINCIPAL_ARN" >> "$GITHUB_ENV"
 
-          echo "AWS Account: $ACCOUNT_ID"
-          echo "AWS Principal: $PRINCIPAL_ARN"
+          echo "========================================"
+          echo "AWS ACCOUNT"
+          echo "$ACCOUNT_ID"
+          echo "========================================"
+
+          echo "========================================"
+          echo "AWS PRINCIPAL"
+          echo "$PRINCIPAL_ARN"
+          echo "========================================"
+
+
+      # ========================================================
+      # SETUP TERRAFORM
+      # ========================================================
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+
+      # ========================================================
+      # TERRAFORM VERSION
+      # ========================================================
+
+      - name: Terraform Version
+        run: |
+          terraform version
+
+
+      # ========================================================
+      # TERRAFORM INIT
+      #
+      # IMPORTANT:
+      # This must happen BEFORE terraform state list.
+      # ========================================================
+
+      - name: Terraform Init
+        working-directory: terraform
+        shell: bash
+        run: |
+
+          set -e
+
+          echo "Initializing Terraform..."
+
+          terraform init \
+            -input=false \
+            -reconfigure
+
+          echo "Terraform initialization completed."
+
+
+      # ========================================================
+      # TERRAFORM STATE CHECK
+      #
+      # Do NOT use:
+      # terraform state list | grep -q
+      #
+      # That caused the EPIPE error previously.
+      # ========================================================
+
+      - name: Check Terraform State
+        working-directory: terraform
+        shell: bash
+        run: |
+
+          set -e
+
+          echo "Checking Terraform state..."
+
+          if terraform state list > /tmp/terraform-state.txt 2>/dev/null; then
+
+            echo "Terraform state exists."
+
+            echo "========================================"
+            echo "CURRENT TERRAFORM RESOURCES"
+            echo "========================================"
+
+            cat /tmp/terraform-state.txt
+
+          else
+
+            echo "No Terraform state found."
+
+            touch /tmp/terraform-state.txt
+
+          fi
 
 
       # ========================================================
@@ -111,160 +186,292 @@ jobs:
         working-directory: terraform
         shell: bash
         run: |
+
           set -e
 
-          echo "Checking Terraform state..."
+          echo "========================================"
+          echo "CHECKING EKS ADMIN ACCESS ENTRY"
+          echo "========================================"
 
-          terraform state list > /tmp/terraform-state.txt
-
-          if grep -Fxq "module.eks.aws_eks_access_entry.admin" /tmp/terraform-state.txt; then
+          if grep -Fxq \
+            "module.eks.aws_eks_access_entry.admin" \
+            /tmp/terraform-state.txt; then
 
             echo "Admin access entry is already managed by Terraform."
 
           else
 
             echo "Admin access entry is NOT in Terraform state."
-            echo "Checking AWS..."
 
-            ACCESS_ENTRY=$(aws eks list-access-entries \
-              --cluster-name "$CLUSTER_NAME" \
+            echo "Checking whether EKS cluster exists..."
+
+            if aws eks describe-cluster \
+              --name "$CLUSTER_NAME" \
               --region "$AWS_REGION" \
-              --query "accessEntries[?@=='$PRINCIPAL_ARN'] | [0]" \
-              --output text)
+              >/dev/null 2>&1; then
 
-            if [ "$ACCESS_ENTRY" = "$PRINCIPAL_ARN" ]; then
+              echo "EKS cluster exists."
 
-              echo "Existing admin access entry found."
-              echo "Importing into Terraform..."
-
-              terraform import \
-                "module.eks.aws_eks_access_entry.admin" \
-                "$CLUSTER_NAME:$PRINCIPAL_ARN"
-
-            else
-
-              echo "Admin access entry does not exist."
-              echo "Terraform will create it."
-
-            fi
-
-          fi
-
-
-      # ========================================================
-      # IMPORT EXISTING CLUSTER ADMIN POLICY ASSOCIATION
-      # ========================================================
-
-      - name: Import Existing EKS Admin Policy Association
-        working-directory: terraform
-        shell: bash
-        run: |
-          set -e
-
-          echo "Checking Terraform state..."
-
-          terraform state list > /tmp/terraform-state.txt
-
-          if grep -Fxq "module.eks.aws_eks_access_policy_association.admin" /tmp/terraform-state.txt; then
-
-            echo "Admin policy association is already managed by Terraform."
-
-          else
-
-            echo "Checking AWS for existing ClusterAdmin policy..."
-
-            POLICY_ARN="arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-
-            POLICY_COUNT=$(aws eks list-associated-access-policies \
-              --cluster-name "$CLUSTER_NAME" \
-              --principal-arn "$PRINCIPAL_ARN" \
-              --region "$AWS_REGION" \
-              --query "associatedAccessPolicies[?policyArn=='$POLICY_ARN'] | length(@)" \
-              --output text)
-
-            if [ "$POLICY_COUNT" = "1" ]; then
-
-              echo "Existing ClusterAdmin policy association found."
-              echo "Importing into Terraform..."
-
-              terraform import \
-                "module.eks.aws_eks_access_policy_association.admin" \
-                "$CLUSTER_NAME#$PRINCIPAL_ARN#$POLICY_ARN"
-
-            else
-
-              echo "ClusterAdmin policy association does not exist."
-              echo "Terraform will create it."
-
-            fi
-
-          fi
-
-
-      # ========================================================
-      # IMPORT EXISTING NODE GROUPS (bank-workers / upi-workers)
-      # ========================================================
-
-      - name: Import Existing EKS Node Groups
-        working-directory: terraform
-        shell: bash
-        run: |
-          set -e
-
-          echo "Checking Terraform state..."
-
-          terraform state list > /tmp/terraform-state.txt
-
-          for PAIR in "bank:bank-workers" "upi:upi-workers"; do
-
-            RESOURCE_KEY="${PAIR%%:*}"
-            NODEGROUP_NAME="${PAIR##*:}"
-
-            echo "--- Checking $NODEGROUP_NAME ---"
-
-            if grep -Fxq "module.nodegroups.aws_eks_node_group.$RESOURCE_KEY" /tmp/terraform-state.txt; then
-
-              echo "$NODEGROUP_NAME is already managed by Terraform."
-
-            else
-
-              echo "$NODEGROUP_NAME is NOT in Terraform state."
-              echo "Checking AWS..."
-
-              NODEGROUP=$(aws eks list-nodegroups \
+              ACCESS_ENTRY=$(aws eks list-access-entries \
                 --cluster-name "$CLUSTER_NAME" \
                 --region "$AWS_REGION" \
-                --query "nodegroups[?@=='$NODEGROUP_NAME'] | [0]" \
+                --query "accessEntries[?@=='$PRINCIPAL_ARN'] | [0]" \
                 --output text)
 
-              if [ "$NODEGROUP" = "$NODEGROUP_NAME" ]; then
+              echo "AWS access entry:"
+              echo "$ACCESS_ENTRY"
 
-                echo "Existing node group found."
-                echo "Importing $NODEGROUP_NAME..."
+              if [ "$ACCESS_ENTRY" = "$PRINCIPAL_ARN" ]; then
+
+                echo "Existing access entry found."
+
+                echo "Importing access entry..."
 
                 terraform import \
-                  "module.nodegroups.aws_eks_node_group.$RESOURCE_KEY" \
-                  "$CLUSTER_NAME:$NODEGROUP_NAME"
+                  "module.eks.aws_eks_access_entry.admin" \
+                  "$CLUSTER_NAME:$PRINCIPAL_ARN"
+
+                echo "Access entry imported successfully."
 
               else
 
-                echo "Node group does not exist."
-                echo "Terraform will create $NODEGROUP_NAME."
+                echo "Access entry does not exist."
+
+                echo "Terraform will create it."
 
               fi
 
+            else
+
+              echo "EKS cluster does not exist."
+
+              echo "Terraform will create the cluster."
+
             fi
 
-          done
+          fi
+
+
+      # ========================================================
+      # IMPORT EXISTING EKS CLUSTER ADMIN POLICY
+      # ========================================================
+
+      - name: Import Existing EKS Cluster Admin Policy
+        working-directory: terraform
+        shell: bash
+        run: |
+
+          set -e
+
+          POLICY_ARN="arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+          echo "========================================"
+          echo "CHECKING CLUSTER ADMIN POLICY"
+          echo "========================================"
+
+          if terraform state list > /tmp/terraform-state-current.txt 2>/dev/null; then
+            :
+          else
+            touch /tmp/terraform-state-current.txt
+          fi
+
+          if grep -Fxq \
+            "module.eks.aws_eks_access_policy_association.admin" \
+            /tmp/terraform-state-current.txt; then
+
+            echo "ClusterAdmin policy is already managed by Terraform."
+
+          else
+
+            if aws eks describe-cluster \
+              --name "$CLUSTER_NAME" \
+              --region "$AWS_REGION" \
+              >/dev/null 2>&1; then
+
+              echo "Checking AWS for ClusterAdmin policy..."
+
+              POLICY_COUNT=$(aws eks list-associated-access-policies \
+                --cluster-name "$CLUSTER_NAME" \
+                --principal-arn "$PRINCIPAL_ARN" \
+                --region "$AWS_REGION" \
+                --query "associatedAccessPolicies[?policyArn=='$POLICY_ARN'] | length(@)" \
+                --output text)
+
+              echo "Policy count:"
+              echo "$POLICY_COUNT"
+
+              if [ "$POLICY_COUNT" = "1" ]; then
+
+                echo "Existing ClusterAdmin policy found."
+
+                echo "Importing policy association..."
+
+                terraform import \
+                  "module.eks.aws_eks_access_policy_association.admin" \
+                  "$CLUSTER_NAME#$PRINCIPAL_ARN#$POLICY_ARN"
+
+                echo "ClusterAdmin policy imported successfully."
+
+              else
+
+                echo "ClusterAdmin policy does not exist."
+
+                echo "Terraform will create it."
+
+              fi
+
+            else
+
+              echo "EKS cluster does not exist."
+
+            fi
+
+          fi
+
+
+      # ========================================================
+      # IMPORT EXISTING BANK NODE GROUP
+      #
+      # Terraform resource:
+      # module.nodegroups.aws_eks_node_group.bank
+      # ========================================================
+
+      - name: Import Existing Bank Node Group
+        working-directory: terraform
+        shell: bash
+        run: |
+
+          set -e
+
+          echo "========================================"
+          echo "CHECKING BANK NODE GROUP"
+          echo "========================================"
+
+          if terraform state list > /tmp/terraform-state-bank.txt 2>/dev/null; then
+            :
+          else
+            touch /tmp/terraform-state-bank.txt
+          fi
+
+          if grep -Fxq \
+            "module.nodegroups.aws_eks_node_group.bank" \
+            /tmp/terraform-state-bank.txt; then
+
+            echo "bank-workers is already managed by Terraform."
+
+          else
+
+            if aws eks describe-nodegroup \
+              --cluster-name "$CLUSTER_NAME" \
+              --nodegroup-name "bank-workers" \
+              --region "$AWS_REGION" \
+              >/dev/null 2>&1; then
+
+              echo "Existing bank-workers node group found."
+
+              echo "Importing bank-workers..."
+
+              terraform import \
+                "module.nodegroups.aws_eks_node_group.bank" \
+                "$CLUSTER_NAME:bank-workers"
+
+              echo "bank-workers imported successfully."
+
+            else
+
+              echo "bank-workers does not exist."
+
+              echo "Terraform will create bank-workers."
+
+            fi
+
+          fi
+
+
+      # ========================================================
+      # IMPORT EXISTING UPI NODE GROUP
+      #
+      # Terraform resource:
+      # module.nodegroups.aws_eks_node_group.upi
+      # ========================================================
+
+      - name: Import Existing UPI Node Group
+        working-directory: terraform
+        shell: bash
+        run: |
+
+          set -e
+
+          echo "========================================"
+          echo "CHECKING UPI NODE GROUP"
+          echo "========================================"
+
+          if terraform state list > /tmp/terraform-state-upi.txt 2>/dev/null; then
+            :
+          else
+            touch /tmp/terraform-state-upi.txt
+          fi
+
+          if grep -Fxq \
+            "module.nodegroups.aws_eks_node_group.upi" \
+            /tmp/terraform-state-upi.txt; then
+
+            echo "upi-workers is already managed by Terraform."
+
+          else
+
+            if aws eks describe-nodegroup \
+              --cluster-name "$CLUSTER_NAME" \
+              --nodegroup-name "upi-workers" \
+              --region "$AWS_REGION" \
+              >/dev/null 2>&1; then
+
+              echo "Existing upi-workers node group found."
+
+              echo "Importing upi-workers..."
+
+              terraform import \
+                "module.nodegroups.aws_eks_node_group.upi" \
+                "$CLUSTER_NAME:upi-workers"
+
+              echo "upi-workers imported successfully."
+
+            else
+
+              echo "upi-workers does not exist."
+
+              echo "Terraform will create upi-workers."
+
+            fi
+
+          fi
+
+
+      # ========================================================
+      # SHOW FINAL TERRAFORM STATE
+      # ========================================================
+
+      - name: Show Terraform State
+        working-directory: terraform
+        shell: bash
+        run: |
+
+          echo "========================================"
+          echo "FINAL TERRAFORM STATE"
+          echo "========================================"
+
+          terraform state list || true
 
 
       # ========================================================
       # TERRAFORM FORMAT
       # ========================================================
 
-      - name: Terraform Format
+      - name: Terraform Format Check
         working-directory: terraform
+        shell: bash
         run: |
+
           terraform fmt -check -recursive
 
 
@@ -274,7 +481,9 @@ jobs:
 
       - name: Terraform Validate
         working-directory: terraform
+        shell: bash
         run: |
+
           terraform validate
 
 
@@ -284,7 +493,9 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform
+        shell: bash
         run: |
+
           terraform plan \
             -input=false \
             -out=tfplan
@@ -296,7 +507,9 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform
+        shell: bash
         run: |
+
           terraform apply \
             -input=false \
             -auto-approve \
@@ -304,111 +517,55 @@ jobs:
 
 
       # ========================================================
-      # HANDLE FAILED NODE GROUPS (AUTO-RECOVERY)
+      # VERIFY EKS CLUSTER
       # ========================================================
 
-      - name: Handle Failed Node Groups
-        working-directory: terraform
-        shell: bash
+      - name: Verify EKS Cluster
         run: |
-          set -e
 
-          NEEDS_REAPPLY=false
+          echo "========================================"
+          echo "EKS CLUSTER STATUS"
+          echo "========================================"
 
-          for PAIR in "bank:bank-workers" "upi:upi-workers"; do
-
-            RESOURCE_KEY="${PAIR%%:*}"
-            NODEGROUP_NAME="${PAIR##*:}"
-
-            STATUS=$(aws eks describe-nodegroup \
-              --cluster-name "$CLUSTER_NAME" \
-              --nodegroup-name "$NODEGROUP_NAME" \
-              --region "$AWS_REGION" \
-              --query "nodegroup.status" \
-              --output text 2>/dev/null || echo "NOT_FOUND")
-
-            echo "$NODEGROUP_NAME status: $STATUS"
-
-            if [ "$STATUS" = "CREATE_FAILED" ] || [ "$STATUS" = "DEGRADED" ]; then
-
-              echo "$NODEGROUP_NAME is in $STATUS state. Deleting so it can be recreated..."
-
-              aws eks delete-nodegroup \
-                --cluster-name "$CLUSTER_NAME" \
-                --nodegroup-name "$NODEGROUP_NAME" \
-                --region "$AWS_REGION"
-
-              echo "Waiting for $NODEGROUP_NAME deletion to complete..."
-
-              aws eks wait nodegroup-deleted \
-                --cluster-name "$CLUSTER_NAME" \
-                --nodegroup-name "$NODEGROUP_NAME" \
-                --region "$AWS_REGION"
-
-              echo "$NODEGROUP_NAME deleted."
-              echo "Removing stale resource from Terraform state..."
-
-              terraform state rm "module.nodegroups.aws_eks_node_group.$RESOURCE_KEY" || true
-
-              NEEDS_REAPPLY=true
-
-            fi
-
-          done
-
-          if [ "$NEEDS_REAPPLY" = true ]; then
-
-            echo "Re-applying Terraform to recreate failed node group(s)..."
-
-            terraform apply \
-              -input=false \
-              -auto-approve
-
-          else
-
-            echo "No recovery action needed."
-
-          fi
+          aws eks describe-cluster \
+            --name "$CLUSTER_NAME" \
+            --region "$AWS_REGION" \
+            --query "cluster.status" \
+            --output text
 
 
       # ========================================================
-      # VERIFY EKS NODE GROUPS
+      # VERIFY BANK NODE GROUP
       # ========================================================
 
-      - name: Verify EKS Node Groups
+      - name: Verify Bank Node Group
         run: |
-          for NODEGROUP_NAME in bank-workers upi-workers; do
 
-            echo "Checking $NODEGROUP_NAME..."
+          echo "Checking bank-workers..."
 
-            aws eks describe-nodegroup \
-              --cluster-name "$CLUSTER_NAME" \
-              --nodegroup-name "$NODEGROUP_NAME" \
-              --region "$AWS_REGION" \
-              --query "nodegroup.status" \
-              --output text
-
-          done
+          aws eks describe-nodegroup \
+            --cluster-name "$CLUSTER_NAME" \
+            --nodegroup-name "bank-workers" \
+            --region "$AWS_REGION" \
+            --query "nodegroup.status" \
+            --output text
 
 
       # ========================================================
-      # WAIT FOR NODE GROUPS TO BECOME ACTIVE
+      # VERIFY UPI NODE GROUP
       # ========================================================
 
-      - name: Wait for Node Groups Active
+      - name: Verify UPI Node Group
         run: |
-          for NODEGROUP_NAME in bank-workers upi-workers; do
 
-            echo "Waiting for $NODEGROUP_NAME to reach ACTIVE status..."
+          echo "Checking upi-workers..."
 
-            aws eks wait nodegroup-active \
-              --cluster-name "$CLUSTER_NAME" \
-              --nodegroup-name "$NODEGROUP_NAME" \
-              --region "$AWS_REGION"
-
-            echo "$NODEGROUP_NAME is ACTIVE."
-
-          done
+          aws eks describe-nodegroup \
+            --cluster-name "$CLUSTER_NAME" \
+            --nodegroup-name "upi-workers" \
+            --region "$AWS_REGION" \
+            --query "nodegroup.status" \
+            --output text
 
 
       # ========================================================
@@ -417,27 +574,10 @@ jobs:
 
       - name: Update EKS Kubeconfig
         run: |
+
           aws eks update-kubeconfig \
             --region "$AWS_REGION" \
             --name "$CLUSTER_NAME"
-
-
-      # ========================================================
-      # WAIT FOR NODES TO BE READY
-      # ========================================================
-
-      - name: Wait for Kubernetes Nodes Ready
-        run: |
-          echo "Waiting for nodes to register and become Ready..."
-
-          kubectl wait \
-            --for=condition=Ready \
-            nodes \
-            --all \
-            --timeout=300s
-
-          echo "All nodes Ready:"
-          kubectl get nodes -o wide
 
 
       # ========================================================
@@ -446,19 +586,27 @@ jobs:
 
       - name: Verify Kubernetes Access
         run: |
+
+          echo "========================================"
+          echo "KUBERNETES CLUSTER"
+          echo "========================================"
+
           kubectl cluster-info
 
-          echo "Kubernetes nodes:"
+          echo "========================================"
+          echo "KUBERNETES NODES"
+          echo "========================================"
+
           kubectl get nodes -o wide
 
 
   # ============================================================
-  # JOB 2: BUILD AND DEPLOY APPLICATIONS
+  # BUILD + DEPLOY
   # ============================================================
 
   deploy:
 
-    name: Build Docker Images and Deploy to EKS
+    name: Build and Deploy APIs
 
     runs-on: ubuntu-latest
 
@@ -467,17 +615,17 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------------
-      # Checkout
-      # --------------------------------------------------------
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
 
       - name: Checkout Code
         uses: actions/checkout@v4
 
 
-      # --------------------------------------------------------
-      # Configure AWS
-      # --------------------------------------------------------
+      # ========================================================
+      # AWS CREDENTIALS
+      # ========================================================
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -488,32 +636,35 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # --------------------------------------------------------
-      # Verify AWS
-      # --------------------------------------------------------
+      # ========================================================
+      # VERIFY AWS
+      # ========================================================
 
       - name: Verify AWS Login
         run: |
+
           aws sts get-caller-identity
 
 
-      # --------------------------------------------------------
-      # Get Account ID
-      # --------------------------------------------------------
+      # ========================================================
+      # GET ACCOUNT ID
+      # ========================================================
 
       - name: Get AWS Account ID
         run: |
+
           ACCOUNT_ID=$(aws sts get-caller-identity \
             --query Account \
             --output text)
 
           echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
 
-          echo "AWS Account ID: $ACCOUNT_ID"
+          echo "AWS Account ID:"
+          echo "$ACCOUNT_ID"
 
 
       # ========================================================
-      # LOGIN TO ECR
+      # ECR LOGIN
       # ========================================================
 
       - name: Login to Amazon ECR
@@ -521,15 +672,23 @@ jobs:
 
 
       # ========================================================
-      # VERIFY ECR REPOSITORIES
+      # VERIFY BANK ECR
       # ========================================================
 
-      - name: Verify ECR Repositories
+      - name: Verify Bank ECR Repository
         run: |
 
           aws ecr describe-repositories \
             --repository-names "$BANK_API_IMAGE" \
             --region "$AWS_REGION"
+
+
+      # ========================================================
+      # VERIFY UPI ECR
+      # ========================================================
+
+      - name: Verify UPI ECR Repository
+        run: |
 
           aws ecr describe-repositories \
             --repository-names "$UPI_API_IMAGE" \
@@ -540,7 +699,7 @@ jobs:
       # BUILD BANK API
       # ========================================================
 
-      - name: Build Bank API Image
+      - name: Build Bank API Docker Image
         run: |
 
           docker build \
@@ -552,7 +711,7 @@ jobs:
       # BUILD UPI API
       # ========================================================
 
-      - name: Build UPI API Image
+      - name: Build UPI API Docker Image
         run: |
 
           docker build \
@@ -561,7 +720,7 @@ jobs:
 
 
       # ========================================================
-      # TAG BANK API
+      # TAG BANK IMAGE
       # ========================================================
 
       - name: Tag Bank API Image
@@ -573,7 +732,7 @@ jobs:
 
 
       # ========================================================
-      # TAG UPI API
+      # TAG UPI IMAGE
       # ========================================================
 
       - name: Tag UPI API Image
@@ -585,7 +744,7 @@ jobs:
 
 
       # ========================================================
-      # PUSH BANK API
+      # PUSH BANK IMAGE
       # ========================================================
 
       - name: Push Bank API Image
@@ -596,7 +755,7 @@ jobs:
 
 
       # ========================================================
-      # PUSH UPI API
+      # PUSH UPI IMAGE
       # ========================================================
 
       - name: Push UPI API Image
@@ -619,19 +778,21 @@ jobs:
 
 
       # ========================================================
-      # VERIFY CLUSTER
+      # VERIFY NODES
       # ========================================================
 
-      - name: Verify Kubernetes Cluster
+      - name: Verify EKS Nodes
         run: |
 
-          kubectl cluster-info
+          echo "========================================"
+          echo "EKS NODES"
+          echo "========================================"
 
           kubectl get nodes -o wide
 
 
       # ========================================================
-      # APPLY BANK API MANIFESTS
+      # CREATE/UPDATE BANK API
       # ========================================================
 
       - name: Apply Bank API Kubernetes Manifests
@@ -642,7 +803,7 @@ jobs:
 
 
       # ========================================================
-      # APPLY UPI API MANIFESTS
+      # CREATE/UPDATE UPI API
       # ========================================================
 
       - name: Apply UPI API Kubernetes Manifests
@@ -653,7 +814,7 @@ jobs:
 
 
       # ========================================================
-      # UPDATE BANK API IMAGE
+      # UPDATE BANK IMAGE
       # ========================================================
 
       - name: Update Bank API Image
@@ -664,7 +825,7 @@ jobs:
 
 
       # ========================================================
-      # UPDATE UPI API IMAGE
+      # UPDATE UPI IMAGE
       # ========================================================
 
       - name: Update UPI API Image
@@ -675,7 +836,7 @@ jobs:
 
 
       # ========================================================
-      # WAIT FOR BANK API
+      # WAIT BANK ROLLOUT
       # ========================================================
 
       - name: Wait for Bank API Rollout
@@ -683,11 +844,11 @@ jobs:
 
           kubectl rollout status \
             deployment/bank-api \
-            --timeout=300s
+            --timeout=180s
 
 
       # ========================================================
-      # WAIT FOR UPI API
+      # WAIT UPI ROLLOUT
       # ========================================================
 
       - name: Wait for UPI API Rollout
@@ -695,23 +856,60 @@ jobs:
 
           kubectl rollout status \
             deployment/upi-api \
-            --timeout=300s
+            --timeout=180s
 
 
       # ========================================================
-      # VERIFY DEPLOYMENTS
+      # SHOW BANK PODS
       # ========================================================
 
-      - name: Verify Kubernetes Deployments
+      - name: Verify Bank API
         run: |
 
-          echo "Deployments:"
+          kubectl get deployment bank-api
+
+          kubectl get pods \
+            -l app=bank-api \
+            -o wide
+
+
+      # ========================================================
+      # SHOW UPI PODS
+      # ========================================================
+
+      - name: Verify UPI API
+        run: |
+
+          kubectl get deployment upi-api
+
+          kubectl get pods \
+            -l app=upi-api \
+            -o wide
+
+
+      # ========================================================
+      # SHOW ALL RESOURCES
+      # ========================================================
+
+      - name: Show Kubernetes Resources
+        run: |
+
+          echo "========================================"
+          echo "DEPLOYMENTS"
+          echo "========================================"
+
           kubectl get deployments -A
 
-          echo "Pods:"
+          echo "========================================"
+          echo "PODS"
+          echo "========================================"
+
           kubectl get pods -A -o wide
 
-          echo "Services:"
+          echo "========================================"
+          echo "SERVICES"
+          echo "========================================"
+
           kubectl get services -A
 
 
@@ -719,12 +917,12 @@ jobs:
       # FINAL STATUS
       # ========================================================
 
-      - name: Deployment Complete
+      - name: Deployment Completed
         run: |
 
-          echo "========================================"
+          echo "============================================"
           echo "EKS DEPLOYMENT COMPLETED SUCCESSFULLY"
-          echo "========================================"
+          echo "============================================"
 
           echo "Cluster:"
           echo "$CLUSTER_NAME"
@@ -732,10 +930,10 @@ jobs:
           echo "Region:"
           echo "$AWS_REGION"
 
-          echo "Bank API image:"
+          echo "Bank API:"
           echo "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BANK_API_IMAGE:${{ github.sha }}"
 
-          echo "UPI API image:"
+          echo "UPI API:"
           echo "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$UPI_API_IMAGE:${{ github.sha }}"
 
-          echo "========================================"
+          echo "============================================"
