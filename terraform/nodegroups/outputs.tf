@@ -8,5 +8,5 @@ output "node_group_name" {
 output "node_role_arn" { 
   
 description = "EKS Worker Node IAM Role ARN" v
-alue = aws_iam_role.node.arn 
+value = aws_iam_role.node.arn 
 }
