@@ -30,8 +30,9 @@ module "eks" {
   vpc_id       = module.vpc.vpc_id
 
   subnet_ids = module.vpc.private_subnet_ids
-}
 
+  additional_admin_arns = var.additional_admin_arns
+}
 
 # =========================================================
 # EKS Node Group

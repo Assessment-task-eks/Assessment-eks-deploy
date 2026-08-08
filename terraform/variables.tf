@@ -51,3 +51,10 @@ variable "max_nodes" {
   description = "Maximum Worker Nodes"
   type        = number
 }
+
+
+variable "additional_admin_arns" {
+  description = "Extra IAM principal ARNs (console users, other engineers) to grant EKS cluster admin access"
+  type        = list(string)
+  default     = []
+}
